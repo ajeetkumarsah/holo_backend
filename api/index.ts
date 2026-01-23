@@ -6,9 +6,6 @@ import authRoutes from "../src/routes/authRoutes";
 
 dotenv.config();
 
-// Connect to database
-connectDB();
-
 const app = express();
 
 app.use(cors());
@@ -21,5 +18,22 @@ app.get("/", (req, res) => {
   res.send("API is running...");
 });
 
-// Export the Express app as a serverless function
-export default app;
+app.get("/api", (req, res) => {
+  res.send("API is running...");
+});
+
+// Connect to database on first request
+let isConnected = false;
+const connectToDatabase = async () => {
+  if (!isConnected) {
+    await connectDB();
+    isConnected = true;
+  }
+};
+
+// Export handler for Vercel
+export default async (req: any, res: any) => {
+  await connectToDatabase();
+  return app(req, res);
+};
+
