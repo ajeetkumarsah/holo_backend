@@ -114,6 +114,88 @@ Authorization: Bearer <your_jwt_token>
 
 ---
 
+### 4. Forgot Password (Request OTP)
+**POST** `/api/auth/forgot-password`
+
+Sends a 6-digit OTP to the user's email for password reset verification.
+
+**Request Body:**
+```json
+{
+  "email": "john@example.com"
+}
+```
+
+**Success Response (200 OK):**
+```json
+{
+  "message": "If an account exists with that email, an OTP has been sent."
+}
+```
+
+---
+
+### 5. Verify OTP
+**POST** `/api/auth/verify-otp`
+
+Verifies the 6-digit OTP sent to the email and returns a temporary reset token.
+
+**Request Body:**
+```json
+{
+  "email": "john@example.com",
+  "otp": "123456"
+}
+```
+
+**Success Response (200 OK):**
+```json
+{
+  "message": "OTP verified successfully",
+  "resetToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+**Error Response:**
+- **400 Bad Request** - Invalid or expired OTP
+  ```json
+  {
+    "message": "Invalid or expired OTP"
+  }
+  ```
+
+---
+
+### 6. Reset Password
+**POST** `/api/auth/reset-password`
+
+Resets the user's password using the temporary reset token obtained from OTP verification.
+
+**Request Body:**
+```json
+{
+  "resetToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "newPassword": "newSecurePassword123"
+}
+```
+
+**Success Response (200 OK):**
+```json
+{
+  "message": "Password reset successfully"
+  }
+```
+
+**Error Response:**
+- **400 Bad Request** - Invalid or expired reset token
+  ```json
+  {
+    "message": "Invalid or expired reset token"
+  }
+  ```
+
+---
+
 ## Testing with cURL
 
 ### Register a new user:
@@ -141,6 +223,37 @@ curl -X POST http://localhost:3000/api/auth/login \
 ```bash
 curl -X GET http://localhost:3000/api/auth/me \
   -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+---
+
+### Request Password Reset OTP:
+```bash
+curl -X POST http://localhost:3000/api/auth/forgot-password \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "john@example.com"
+  }'
+```
+
+### Verify OTP:
+```bash
+curl -X POST http://localhost:3000/api/auth/verify-otp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "john@example.com",
+    "otp": "123456"
+  }'
+```
+
+### Reset Password:
+```bash
+curl -X POST http://localhost:3000/api/auth/reset-password \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resetToken": "YOUR_RESET_TOKEN",
+    "newPassword": "newpassword123"
+  }'
 ```
 
 ---
