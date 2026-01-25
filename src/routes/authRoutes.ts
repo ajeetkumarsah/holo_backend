@@ -1,5 +1,12 @@
 import express from "express";
-import { registerUser, loginUser, getMe } from "../controllers/authController";
+import {
+  registerUser,
+  loginUser,
+  getMe,
+  forgotPassword,
+  verifyOTP,
+  resetPassword,
+} from "../controllers/authController";
 import { protect } from "../middleware/authMiddleware";
 
 const router = express.Router();
@@ -8,4 +15,10 @@ router.post("/register", registerUser);
 router.post("/login", loginUser);
 router.get("/me", protect, getMe);
 
+// Password Reset Routes
+router.post("/forgot-password", forgotPassword);
+router.post("/verify-otp", verifyOTP);
+router.post("/reset-password", resetPassword);
+
 export default router;
+
