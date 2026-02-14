@@ -6,6 +6,7 @@ import {
   forgotPassword,
   verifyOTP,
   resetPassword,
+  checkRegisteredUsers,
 } from "../controllers/authController";
 import { protect } from "../middleware/authMiddleware";
 
@@ -19,6 +20,9 @@ router.get("/me", protect, getMe);
 router.post("/forgot-password", forgotPassword);
 router.post("/verify-otp", verifyOTP);
 router.post("/reset-password", resetPassword);
+
+// User Routes
+router.post("/check-registered", protect, checkRegisteredUsers);
 
 export default router;
 

@@ -227,3 +227,38 @@ export const resetPassword = async (
     return sendResponse(res, 400, false, "Invalid or expired reset token");
   }
 };
+
+// @desc    Check if contacts are registered users
+// @route   POST /api/users/check-registered
+// @access  Private
+export const checkRegisteredUsers = async (
+  req: Request | any,
+  res: Response
+): Promise<any> => {
+  const { identifiers } = req.body;
+
+  try {
+    if (!identifiers || !Array.isArray(identifiers) || identifiers.length === 0) {
+      return sendResponse(res, 400, false, "Please provide identifiers array");
+    }
+
+    // Find users by email (phone support can be added later if needed)
+    const users = await User.find({
+      email: { $in: identifiers }
+    }).select('_id email fullName');
+
+    // Create a map of registered identifiers to user info
+    const registeredUsers = users.map(user => ({
+      identifier: user.email,
+      userId: user._id,
+      fullName: user.fullName
+    }));
+
+    return sendResponse(res, 200, true, "Registered users fetched successfully", {
+      registeredUsers
+    });
+  } catch (error) {
+    return sendResponse(res, 500, false, (error as Error).message);
+  }
+};
+

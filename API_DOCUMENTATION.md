@@ -229,6 +229,65 @@ Resets the user's password using the temporary reset token obtained from OTP ver
 
 ---
 
+### 7. Check Registered Users
+**POST** `/api/auth/check-registered`
+
+Checks which contacts from a list of identifiers (emails) are registered users.
+
+**Headers Required:**
+```
+Authorization: Bearer <your_jwt_token>
+```
+
+**Request Body:**
+```json
+{
+  "identifiers": ["john@example.com", "jane@example.com", "notregistered@test.com"]
+}
+```
+
+**Success Response (200 OK):**
+```json
+{
+  "status": true,
+  "message": "Registered users fetched successfully",
+  "data": {
+    "registeredUsers": [
+      {
+        "identifier": "john@example.com",
+        "userId": "507f1f77bcf86cd799439011",
+        "fullName": "John Doe"
+      },
+      {
+        "identifier": "jane@example.com",
+        "userId": "507f1f77bcf86cd799439012",
+        "fullName": "Jane Smith"
+      }
+    ]
+  }
+}
+```
+
+**Error Responses:**
+- **401 Unauthorized** - No token or invalid token
+  ```json
+  {
+    "status": false,
+    "message": "Not authorized, no token",
+    "data": null
+  }
+  ```
+- **400 Bad Request** - Invalid identifiers array
+  ```json
+  {
+    "status": false,
+    "message": "Please provide identifiers array",
+    "data": null
+  }
+  ```
+
+---
+
 ## Testing with cURL
 
 ### Register a new user:
