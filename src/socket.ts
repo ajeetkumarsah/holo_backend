@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import User from "./models/User";
 import ChatMessage from "./models/ChatMessage";
 import Conversation from "./models/Conversation";
+import mongoose from "mongoose";
 
 interface ExtendedWebSocket extends WebSocket {
   userId?: string;
@@ -107,11 +108,9 @@ async function handleMessageSend(
     // 1. Save to DB
     const newMessage = await ChatMessage.create({
       conversationId,
-      sender: senderId,
+      sender: new mongoose.Types.ObjectId(senderId),
       body,
       timestamp: Date.now(),
-      deliveredAt: undefined,
-      readAt: undefined,
     });
 
     // 2. Relay to Recipient(s)

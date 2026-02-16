@@ -16,6 +16,7 @@ exports.initSocket = void 0;
 const ws_1 = require("ws");
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const ChatMessage_1 = __importDefault(require("./models/ChatMessage"));
+const mongoose_1 = __importDefault(require("mongoose"));
 const initSocket = (server) => {
     const wss = new ws_1.WebSocketServer({ server, path: "/chat-ws" });
     const clients = new Map();
@@ -97,11 +98,9 @@ function handleMessageSend(ws, data, clients) {
             // 1. Save to DB
             const newMessage = yield ChatMessage_1.default.create({
                 conversationId,
-                sender: senderId,
+                sender: new mongoose_1.default.Types.ObjectId(senderId),
                 body,
                 timestamp: Date.now(),
-                deliveredAt: undefined,
-                readAt: undefined,
             });
             // 2. Relay to Recipient(s)
             // In a real app with group chat, you'd fetch conversation participants.
