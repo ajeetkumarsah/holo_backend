@@ -34,28 +34,12 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 const mongoose_1 = __importStar(require("mongoose"));
-const UserSchema = new mongoose_1.Schema({
-    fullName: {
-        type: String,
-        required: true,
-    },
-    email: {
-        type: String,
-        required: true,
-        unique: true,
-    },
-    phoneNumber: {
-        type: String,
-        required: true,
-        unique: true,
-    },
-    password: {
-        type: String,
-        // Password might be empty if we enable other auth methods later, but for now required
-        required: true,
-    },
-}, {
-    timestamps: true,
+const ChatMessageSchema = new mongoose_1.Schema({
+    conversationId: { type: String, required: true },
+    sender: { type: mongoose_1.default.Schema.Types.ObjectId, ref: 'User', required: true },
+    body: { type: String, required: true },
+    timestamp: { type: Number, default: Date.now },
+    deliveredAt: { type: Number },
+    readAt: { type: Number },
 });
-const User = mongoose_1.default.model("User", UserSchema);
-exports.default = User;
+exports.default = mongoose_1.default.model('ChatMessage', ChatMessageSchema);

@@ -110,8 +110,8 @@ async function handleMessageSend(
       sender: senderId,
       body,
       timestamp: Date.now(),
-      deliveredAt: null,
-      readAt: null,
+      deliveredAt: undefined,
+      readAt: undefined,
     });
 
     // 2. Relay to Recipient(s)

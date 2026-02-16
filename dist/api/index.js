@@ -17,6 +17,7 @@ const dotenv_1 = __importDefault(require("dotenv"));
 const cors_1 = __importDefault(require("cors"));
 const db_1 = __importDefault(require("../src/config/db"));
 const authRoutes_1 = __importDefault(require("../src/routes/authRoutes"));
+const errorMiddleware_1 = require("../src/middleware/errorMiddleware");
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 app.use((0, cors_1.default)());
@@ -30,6 +31,7 @@ app.get("/", (req, res) => {
 app.get("/api", (req, res) => {
     res.json({ message: "API is running..." });
 });
+app.use(errorMiddleware_1.errorHandler);
 // Connect to database once
 let isConnected = false;
 const handler = (req, res) => __awaiter(void 0, void 0, void 0, function* () {

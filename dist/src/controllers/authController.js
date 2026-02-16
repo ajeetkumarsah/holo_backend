@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.resetPassword = exports.verifyOTP = exports.forgotPassword = exports.getMe = exports.loginUser = exports.registerUser = void 0;
+exports.checkRegisteredUsers = exports.resetPassword = exports.verifyOTP = exports.forgotPassword = exports.getMe = exports.loginUser = exports.registerUser = void 0;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const User_1 = __importDefault(require("../models/User"));
@@ -29,14 +29,22 @@ const generateToken = (id) => {
 // @route   POST /api/auth/register
 // @access  Public
 const registerUser = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    const { fullName, email, password } = req.body;
+    const { fullName, email, password, phone } = req.body;
     try {
-        if (!fullName || !email || !password) {
+        if (!fullName || !email || !password || !phone) {
             return (0, responseHandler_1.sendResponse)(res, 400, false, "Please add all fields");
         }
-        // Check if user exists
-        const userExists = yield User_1.default.findOne({ email });
+        // Check if user exists by email or phone
+        const userExists = yield User_1.default.findOne({
+            $or: [{ email }, { phoneNumber: phone }]
+        });
         if (userExists) {
+            if (userExists.email === email) {
+                return (0, responseHandler_1.sendResponse)(res, 400, false, "Email already registered");
+            }
+            if (userExists.phoneNumber === phone) {
+                return (0, responseHandler_1.sendResponse)(res, 400, false, "Phone number already registered");
+            }
             return (0, responseHandler_1.sendResponse)(res, 400, false, "User already exists");
         }
         // Hash password
@@ -46,6 +54,7 @@ const registerUser = (req, res) => __awaiter(void 0, void 0, void 0, function* (
         const user = yield User_1.default.create({
             fullName,
             email,
+            phoneNumber: phone,
             password: hashedPassword,
         });
         if (user) {
@@ -53,6 +62,7 @@ const registerUser = (req, res) => __awaiter(void 0, void 0, void 0, function* (
                 _id: user.id,
                 fullName: user.fullName,
                 email: user.email,
+                phoneNumber: user.phoneNumber,
                 token: generateToken(user.id),
             });
         }
@@ -201,3 +211,49 @@ const resetPassword = (req, res) => __awaiter(void 0, void 0, void 0, function* 
     }
 });
 exports.resetPassword = resetPassword;
+// @desc    Check if contacts are registered users
+// @route   POST /api/users/check-registered
+// @access  Private
+const checkRegisteredUsers = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const { identifiers } = req.body;
+    try {
+        if (!identifiers || !Array.isArray(identifiers) || identifiers.length === 0) {
+            return (0, responseHandler_1.sendResponse)(res, 400, false, "Please provide identifiers array");
+        }
+        // Find users by email OR phone number
+        const users = yield User_1.default.find({
+            $or: [
+                { email: { $in: identifiers } },
+                { phoneNumber: { $in: identifiers } }
+            ]
+        }).select('_id email phoneNumber fullName');
+        // Create a map of registered identifiers to user info
+        const registeredUsers = users.flatMap(user => {
+            const matches = [];
+            // Add match for email if it's in the identifiers list
+            if (user.email && identifiers.includes(user.email)) {
+                matches.push({
+                    identifier: user.email,
+                    userId: user._id,
+                    fullName: user.fullName
+                });
+            }
+            // Add match for phone if it's in the identifiers list
+            if (user.phoneNumber && identifiers.includes(user.phoneNumber)) {
+                matches.push({
+                    identifier: user.phoneNumber,
+                    userId: user._id,
+                    fullName: user.fullName
+                });
+            }
+            return matches;
+        });
+        return (0, responseHandler_1.sendResponse)(res, 200, true, "Registered users fetched successfully", {
+            registeredUsers
+        });
+    }
+    catch (error) {
+        return (0, responseHandler_1.sendResponse)(res, 500, false, error.message);
+    }
+});
+exports.checkRegisteredUsers = checkRegisteredUsers;

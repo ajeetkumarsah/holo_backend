@@ -14,4 +14,6 @@ router.get("/me", authMiddleware_1.protect, authController_1.getMe);
 router.post("/forgot-password", authController_1.forgotPassword);
 router.post("/verify-otp", authController_1.verifyOTP);
 router.post("/reset-password", authController_1.resetPassword);
+// User Routes
+router.post("/check-registered", authMiddleware_1.protect, authController_1.checkRegisteredUsers);
 exports.default = router;
