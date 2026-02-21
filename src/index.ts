@@ -4,6 +4,7 @@ import cors from "cors";
 import connectDB from "./config/db";
 import authRoutes from "./routes/authRoutes";
 import callRoutes from "./routes/callRoutes";
+import messageRoutes from "./routes/messageRoutes";
 
 import { sendResponse } from "./utils/responseHandler";
 import { errorHandler } from "./middleware/errorMiddleware";
@@ -22,6 +23,7 @@ app.use(express.urlencoded({ extended: false }));
 
 app.use("/api/auth",  authRoutes);
 app.use("/api/calls", callRoutes);
+app.use("/api/messages", messageRoutes);
 
 
 app.get("/", (req, res) => {

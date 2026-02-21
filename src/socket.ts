@@ -112,14 +112,21 @@ async function handleMessageSend(
       timestamp: Date.now(),
     });
 
-    ws.send(
-      JSON.stringify({
-        type: "message:sent",
-        message: newMessage,
-        tempId: data.tempId,
-      })
-    );
+    // ── Notify sender of successful transmission ──
+    const sender = clients.get(senderId);
+    if (sender && sender.readyState === WebSocket.OPEN) {
+      sender.send(
+        JSON.stringify({
+          type: "message:ack",
+          messageId: newMessage._id,
+          tempId: data.tempId,
+        })
+      );
+    }
 
+    // ── Broadcast to other participants ──
+    // For now, simple broadcast to all EXCEPT sender.
+    // In a production app, we would look up members of the conversationId.
     clients.forEach((client, clientId) => {
       if (clientId !== senderId && client.readyState === WebSocket.OPEN) {
         client.send(
@@ -134,6 +141,15 @@ async function handleMessageSend(
             },
           })
         );
+        
+        // If the other participant is online, we can consider it "delivered"
+        if (sender && sender.readyState === WebSocket.OPEN) {
+          sender.send(JSON.stringify({
+            type: "message:delivered",
+            messageId: newMessage._id,
+            deliveredAt: Date.now()
+          }));
+        }
       }
     });
   } catch (error) {
@@ -141,12 +157,39 @@ async function handleMessageSend(
   }
 }
 
-function handleMessageRead(
+async function handleMessageRead(
   ws: ExtendedWebSocket,
   data: any,
   clients: Map<string, ExtendedWebSocket>
 ) {
-  // notify sender that message was read — placeholder
+  const { conversationId, messageId } = data;
+  const readerId = ws.userId;
+  if (!readerId) return;
+
+  try {
+    const timestamp = Date.now();
+    // Update all messages in this conversation not sent by me as read
+    const query: any = { conversationId, sender: { $ne: readerId }, readAt: { $exists: false } };
+    if (messageId) query._id = messageId;
+
+    await ChatMessage.updateMany(query, { readAt: timestamp });
+
+    // Notify other participants (simplified broadcast)
+    clients.forEach((client, clientId) => {
+      if (clientId !== readerId && client.readyState === WebSocket.OPEN) {
+        client.send(
+          JSON.stringify({
+            type: "message:read",
+            conversationId,
+            messageId, // if null, means mark all read
+            readAt: timestamp,
+          })
+        );
+      }
+    });
+  } catch (e) {
+    console.error("Error updating read status:", e);
+  }
 }
 
 // VIDEO CALL SIGNALING
@@ -209,6 +252,14 @@ async function handleCallSignaling(
       } catch (e) { console.error("CallLog save error:", e); }
       activeCalls.delete(fromUserId);
       activeCalls.delete(toUserId);
+      
+      // Notify both parties to refresh history
+      [fromUserId, toUserId].forEach(id => {
+        const client = clients.get(id);
+        if (client && client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({ type: "history:updated" }));
+        }
+      });
     }
   }
 
@@ -225,6 +276,14 @@ async function handleCallSignaling(
         });
       } catch (e) { console.error("CallLog save error:", e); }
       activeCalls.delete(toUserId);
+
+      // Notify both parties to refresh history
+      [fromUserId, toUserId].forEach(id => {
+        const client = clients.get(id);
+        if (client && client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({ type: "history:updated" }));
+        }
+      });
     }
   }
 

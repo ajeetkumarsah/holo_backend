@@ -108,6 +108,7 @@ export const getMe = async (
       id: user._id,
       fullName: user.fullName,
       email: user.email,
+      phoneNumber: user.phoneNumber,
     });
   } else {
     return sendResponse(res, 404, false, "User not found");
