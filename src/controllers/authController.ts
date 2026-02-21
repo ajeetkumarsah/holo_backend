@@ -330,3 +330,29 @@ export const updateProfile = async (
     return sendResponse(res, 500, false, (error as Error).message);
   }
 };
+// @desc    Get user by ID
+// @route   GET /api/auth/users/:id
+// @access  Private
+export const getUserById = async (
+  req: Request | any,
+  res: Response
+): Promise<any> => {
+  try {
+    const user = await User.findById(req.params.id).select('-password');
+
+    if (!user) {
+      return sendResponse(res, 404, false, "User not found");
+    }
+
+    return sendResponse(res, 200, true, "User data fetched successfully", {
+      id: user._id,
+      fullName: user.fullName,
+      email: user.email,
+      phoneNumber: user.phoneNumber,
+      bio: user.bio,
+      avatar: user.avatar,
+    });
+  } catch (error) {
+    return sendResponse(res, 500, false, (error as Error).message);
+  }
+};

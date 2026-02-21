@@ -8,6 +8,7 @@ import {
   resetPassword,
   checkRegisteredUsers,
   updateProfile,
+  getUserById,
 } from "../controllers/authController";
 import { protect } from "../middleware/authMiddleware";
 
@@ -25,6 +26,7 @@ router.post("/reset-password", resetPassword);
 
 // User Routes
 router.post("/check-registered", protect, checkRegisteredUsers);
+router.get("/users/:id", protect, getUserById);
 
 export default router;
 
