@@ -109,6 +109,8 @@ export const getMe = async (
       fullName: user.fullName,
       email: user.email,
       phoneNumber: user.phoneNumber,
+      bio: user.bio,
+      avatar: user.avatar,
     });
   } else {
     return sendResponse(res, 404, false, "User not found");
@@ -294,3 +296,37 @@ export const checkRegisteredUsers = async (
   }
 };
 
+// @desc    Update user profile
+// @route   PUT /api/auth/me
+// @access  Private
+export const updateProfile = async (
+  req: Request | any,
+  res: Response
+): Promise<any> => {
+  const { fullName, bio, avatar } = req.body;
+
+  try {
+    const user = await User.findById(req.user.id);
+
+    if (!user) {
+      return sendResponse(res, 404, false, "User not found");
+    }
+
+    if (fullName) user.fullName = fullName;
+    if (bio !== undefined) user.bio = bio;
+    if (avatar !== undefined) user.avatar = avatar;
+
+    await user.save();
+
+    return sendResponse(res, 200, true, "Profile updated successfully", {
+      id: user._id,
+      fullName: user.fullName,
+      email: user.email,
+      phoneNumber: user.phoneNumber,
+      bio: user.bio,
+      avatar: user.avatar,
+    });
+  } catch (error) {
+    return sendResponse(res, 500, false, (error as Error).message);
+  }
+};

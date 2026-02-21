@@ -7,6 +7,7 @@ import {
   verifyOTP,
   resetPassword,
   checkRegisteredUsers,
+  updateProfile,
 } from "../controllers/authController";
 import { protect } from "../middleware/authMiddleware";
 
@@ -15,6 +16,7 @@ const router = express.Router();
 router.post("/register", registerUser);
 router.post("/login", loginUser);
 router.get("/me", protect, getMe);
+router.put("/me", protect, updateProfile);
 
 // Password Reset Routes
 router.post("/forgot-password", forgotPassword);

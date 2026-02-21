@@ -5,6 +5,8 @@ export interface IUser extends Document {
   email: string;
   phoneNumber?: string;
   password?: string;
+  bio?: string;
+  avatar?: string;
   createdAt: Date;
 }
 
@@ -28,6 +30,14 @@ const UserSchema: Schema = new Schema(
       type: String,
       // Password might be empty if we enable other auth methods later, but for now required
       required: true,
+    },
+    bio: {
+      type: String,
+      default: "Hey there! I am using HoloLink.",
+    },
+    avatar: {
+      type: String,
+      default: "",
     },
   },
   {
