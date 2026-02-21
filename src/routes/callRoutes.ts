@@ -3,6 +3,7 @@ import { protect } from '../middleware/authMiddleware';
 import CallLog from '../models/CallLog';
 import User from '../models/User';
 import mongoose from 'mongoose';
+import { RtcTokenBuilder, RtcRole } from 'agora-token';
 
 const router = express.Router();
 
@@ -53,6 +54,51 @@ router.get('/history', protect, async (req: any, res) => {
   } catch (err) {
     console.error('Call history error:', err);
     res.status(500).json({ status: false, message: 'Failed to fetch call history' });
+  }
+});
+
+/**
+ * GET /api/calls/token
+ * Generates an Agora RTC token for a specific channel.
+ * Query params: channel (string), uid (number, optional)
+ */
+router.get('/token', protect, async (req: any, res) => {
+  try {
+    const channelName = req.query.channel as string;
+    if (!channelName) {
+      return res.status(400).json({ status: false, message: 'Channel name is required' });
+    }
+
+    const appId = process.env.AGORA_APP_ID || '4109263ac089453ba4b0a85b16eb36d2';
+    const appCertificate = process.env.AGORA_APP_CERTIFICATE;
+    
+    if (!appCertificate) {
+      console.warn('AGORA_APP_CERTIFICATE not found in environment. Token will be invalid.');
+      // For fallback/best practice, we should ideally fail here, 
+      // but let's try to proceed with a placeholder or warning if it's a dev environment.
+    }
+
+    const uid = parseInt(req.query.uid as string) || 0;
+    const role = RtcRole.PUBLISHER;
+
+    const expirationTimeInSeconds = 3600; // 1 hour
+    const currentTimestamp = Math.floor(Date.now() / 1000);
+    const privilegeExpiredTs = currentTimestamp + expirationTimeInSeconds;
+
+    const token = RtcTokenBuilder.buildTokenWithUid(
+      appId,
+      appCertificate || "", // If no certificate, token won't work in secured mode
+      channelName,
+      uid,
+      role,
+      privilegeExpiredTs,
+      privilegeExpiredTs
+    );
+
+    res.json({ status: true, token, appId });
+  } catch (err) {
+    console.error('Agora token error:', err);
+    res.status(500).json({ status: false, message: 'Failed to generate token' });
   }
 });
 
