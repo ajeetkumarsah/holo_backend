@@ -33,7 +33,7 @@ export const initSocket = (server: Server) => {
     try {
       const decoded: any = jwt.verify(
         token,
-        process.env.JWT_SECRET || "default_secret"
+        process.env.JWT_SECRET || "secret"
       );
       ws.userId = decoded.id;
       ws.isAlive = true;
