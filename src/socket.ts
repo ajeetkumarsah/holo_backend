@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import User from "./models/User";
 import ChatMessage from "./models/ChatMessage";
 import Conversation from "./models/Conversation";
+import CallLog from "./models/CallLog";
 import mongoose from "mongoose";
 
 interface ExtendedWebSocket extends WebSocket {
@@ -11,10 +12,13 @@ interface ExtendedWebSocket extends WebSocket {
   isAlive?: boolean;
 }
 
+// Track active calls: callerId -> { receiverId, startedAt }
+const activeCalls = new Map<string, { receiverId: string; startedAt: Date }>();
+
 export const initSocket = (server: Server) => {
   const wss = new WebSocketServer({ server, path: "/chat-ws" });
 
-  const clients = new Map<String, ExtendedWebSocket>();
+  const clients = new Map<string, ExtendedWebSocket>();
 
   wss.on("connection", async (ws: ExtendedWebSocket, req: IncomingMessage) => {
     // 1. Auth
@@ -56,13 +60,12 @@ export const initSocket = (server: Server) => {
         const { type } = parsed;
 
         if (type === "message:send") {
-            await handleMessageSend(ws, parsed, clients);
+          await handleMessageSend(ws, parsed, clients);
         } else if (type === "message:read") {
-            handleMessageRead(ws, parsed, clients);
+          handleMessageRead(ws, parsed, clients);
         } else if (type.startsWith("call:")) {
-            handleCallSignaling(ws, parsed, clients);
+          await handleCallSignaling(ws, parsed, clients);
         }
-
       } catch (e) {
         console.error("Socket message error:", e);
       }
@@ -80,9 +83,8 @@ export const initSocket = (server: Server) => {
   // Heartbeat interval
   const interval = setInterval(() => {
     wss.clients.forEach((ws: WebSocket) => {
-        const extWs = ws as ExtendedWebSocket;
+      const extWs = ws as ExtendedWebSocket;
       if (extWs.isAlive === false) return ws.terminate();
-
       extWs.isAlive = false;
       ws.ping();
     });
@@ -93,19 +95,16 @@ export const initSocket = (server: Server) => {
 
 // Handlers
 
-// Handlers
-
 async function handleMessageSend(
   ws: ExtendedWebSocket,
   data: any,
-  clients: Map<String, ExtendedWebSocket>
+  clients: Map<string, ExtendedWebSocket>
 ) {
   const { conversationId, body } = data;
   const senderId = ws.userId;
   if (!senderId) return;
 
   try {
-    // 1. Save to DB
     const newMessage = await ChatMessage.create({
       conversationId,
       sender: new mongoose.Types.ObjectId(senderId),
@@ -113,85 +112,126 @@ async function handleMessageSend(
       timestamp: Date.now(),
     });
 
-    // 2. Relay to Recipient(s)
-    // In a real app with group chat, you'd fetch conversation participants.
-    // Since this is 1-on-1 and we don't have easy participant lookup here without querying Conversation,
-    // we'll make a pragmatic assumption for this feature: 
-    // The client SHOULD ideally send `toUserId`. If not, we broadcast to valid users in memory 
-    // who are part of this conversation (which we can't fully know without DB).
-    
-    // However, for the Video Call feature request, the crucial part is SIGNALING.
-    // Chat messages are secondary but important.
-    // Let's rely on standard 'message:new' event.
-    
-    // NOTE: This implementation assumes we might need to look up the conversation to find the other user.
-    // For speed, let's just send back confirmation to sender
-    ws.send(JSON.stringify({
-      type: 'message:sent',
-      message: newMessage,
-      tempId: data.tempId // Client provided temp ID to correlate
-    }));
+    ws.send(
+      JSON.stringify({
+        type: "message:sent",
+        message: newMessage,
+        tempId: data.tempId,
+      })
+    );
 
-    // BROADCAST APPROACH (inefficient but works for small prototypes/demos):
-    // Send to everyone else. The client filters by conversationId.
     clients.forEach((client, clientId) => {
       if (clientId !== senderId && client.readyState === WebSocket.OPEN) {
-         client.send(JSON.stringify({
-           type: 'message:new',
-           message: {
-             id: newMessage._id,
-             conversationId,
-             sender: senderId,
-             body,
-             timestamp: newMessage.timestamp,
-           }
-         }));
+        client.send(
+          JSON.stringify({
+            type: "message:new",
+            message: {
+              id: newMessage._id,
+              conversationId,
+              sender: senderId,
+              body,
+              timestamp: newMessage.timestamp,
+            },
+          })
+        );
       }
     });
-
   } catch (error) {
     console.error("Error saving message:", error);
   }
 }
 
 function handleMessageRead(
-    ws: ExtendedWebSocket,
-    data: any,
-    clients: Map<String, ExtendedWebSocket>
+  ws: ExtendedWebSocket,
+  data: any,
+  clients: Map<string, ExtendedWebSocket>
 ) {
-    // Similar to send, notify sender that message was read
+  // notify sender that message was read — placeholder
 }
 
 // VIDEO CALL SIGNALING
-function handleCallSignaling(
+async function handleCallSignaling(
   ws: ExtendedWebSocket,
   data: any,
-  clients: Map<String, ExtendedWebSocket>
+  clients: Map<string, ExtendedWebSocket>
 ) {
-    const { type, conversationId, toUserId } = data;
-    
-    // Ideally, for calls we need `toUserId` explicitly or conversationId lookup.
-    // The frontend should send `toUserId` for direct calls to make routing easy.
-    // If `toUserId` is missing, we might struggle to route.
-    
-    // If the frontend includes `toUserId` (which for 1-on-1 is the other person), use it.
-    if (toUserId) {
-        const target = clients.get(toUserId);
-        if (target && target.readyState === WebSocket.OPEN) {
-            
-            // Add caller info to payload
-            const payload = { ...data, fromUserId: ws.userId };
-            
-            // Forward event
-            target.send(JSON.stringify(payload));
-        } else {
-            // Target offline
-             ws.send(JSON.stringify({ type: 'call:error', message: 'User is offline' }));
-        }
+  const { type, toUserId } = data;
+  const fromUserId = ws.userId;
+  if (!fromUserId) return;
+
+  if (!toUserId) {
+    console.warn("Call signaling missing toUserId", data);
+    return;
+  }
+
+  const target = clients.get(toUserId);
+
+  if (type === "call:incoming" || type === "call:invite") {
+    // ── Look up caller's display name from DB ──
+    let callerName = "Unknown";
+    try {
+      const caller = await User.findById(fromUserId).select("fullName name");
+      callerName = (caller as any)?.fullName || (caller as any)?.name || callerName;
+    } catch (_) {}
+
+    // Track call start time
+    activeCalls.set(fromUserId, { receiverId: toUserId, startedAt: new Date() });
+
+    if (target && target.readyState === WebSocket.OPEN) {
+      target.send(
+        JSON.stringify({
+          ...data,
+          fromUserId,
+          callerName,       // ← inject real name
+          type: "call:incoming",
+        })
+      );
     } else {
-        // Broadcast to conversation participants (requires DB lookup)
-        // For now, if we don't have toUserId, we can't reliably route in this memory-only map
-        // unless we know the mapping.
-        console.warn("Call signaling missing toUserId", data);
+      ws.send(JSON.stringify({ type: "call:error", message: "User is offline" }));
     }
+    return;
+  }
+
+  if (type === "call:ended") {
+    const callInfo = activeCalls.get(fromUserId) ?? activeCalls.get(toUserId);
+    if (callInfo) {
+      const endedAt = new Date();
+      const durationSec = Math.round((endedAt.getTime() - callInfo.startedAt.getTime()) / 1000);
+      try {
+        await CallLog.create({
+          callerId:   new mongoose.Types.ObjectId(callInfo.receiverId === toUserId ? fromUserId : toUserId),
+          receiverId: new mongoose.Types.ObjectId(callInfo.receiverId === toUserId ? toUserId : fromUserId),
+          status: durationSec > 3 ? "completed" : "missed",
+          startedAt: callInfo.startedAt,
+          endedAt,
+          duration: durationSec > 3 ? durationSec : undefined,
+        });
+      } catch (e) { console.error("CallLog save error:", e); }
+      activeCalls.delete(fromUserId);
+      activeCalls.delete(toUserId);
+    }
+  }
+
+  if (type === "call:declined") {
+    const callInfo = activeCalls.get(toUserId); // toUserId is the caller here
+    if (callInfo) {
+      try {
+        await CallLog.create({
+          callerId:   new mongoose.Types.ObjectId(toUserId),
+          receiverId: new mongoose.Types.ObjectId(fromUserId),
+          status: "declined",
+          startedAt: callInfo.startedAt,
+          endedAt: new Date(),
+        });
+      } catch (e) { console.error("CallLog save error:", e); }
+      activeCalls.delete(toUserId);
+    }
+  }
+
+  // Forward to target
+  if (target && target.readyState === WebSocket.OPEN) {
+    target.send(JSON.stringify({ ...data, fromUserId }));
+  } else if (type !== "call:ended" && type !== "call:declined") {
+    ws.send(JSON.stringify({ type: "call:error", message: "User is offline" }));
+  }
 }

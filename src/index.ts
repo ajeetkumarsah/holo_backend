@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import cors from "cors";
 import connectDB from "./config/db";
 import authRoutes from "./routes/authRoutes";
+import callRoutes from "./routes/callRoutes";
 
 import { sendResponse } from "./utils/responseHandler";
 import { errorHandler } from "./middleware/errorMiddleware";
@@ -19,7 +20,9 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-app.use("/api/auth", authRoutes);
+app.use("/api/auth",  authRoutes);
+app.use("/api/calls", callRoutes);
+
 
 app.get("/", (req, res) => {
   sendResponse(res, 200, true, "API is running...");
