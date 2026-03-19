@@ -8,6 +8,7 @@ import {
   resetPassword,
   checkRegisteredUsers,
   updateProfile,
+  updateFcmToken,
   getUserById,
 } from "../controllers/authController";
 import { protect } from "../middleware/authMiddleware";
@@ -18,6 +19,7 @@ router.post("/register", registerUser);
 router.post("/login", loginUser);
 router.get("/me", protect, getMe);
 router.put("/me", protect, updateProfile);
+router.put("/fcm-token", protect, updateFcmToken);
 
 // Password Reset Routes
 router.post("/forgot-password", forgotPassword);

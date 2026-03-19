@@ -330,9 +330,23 @@ export const updateProfile = async (
     return sendResponse(res, 500, false, (error as Error).message);
   }
 };
-// @desc    Get user by ID
-// @route   GET /api/auth/users/:id
+// @desc    Register / update FCM push token for the current user
+// @route   PUT /api/auth/fcm-token
 // @access  Private
+export const updateFcmToken = async (
+  req: Request | any,
+  res: Response
+): Promise<any> => {
+  const { fcmToken } = req.body;
+  if (!fcmToken) return sendResponse(res, 400, false, "fcmToken is required");
+
+  try {
+    await User.findByIdAndUpdate(req.user.id, { fcmToken });
+    return sendResponse(res, 200, true, "FCM token updated");
+  } catch (error) {
+    return sendResponse(res, 500, false, (error as Error).message);
+  }
+};
 export const getUserById = async (
   req: Request | any,
   res: Response

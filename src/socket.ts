@@ -6,6 +6,7 @@ import ChatMessage from "./models/ChatMessage";
 import Conversation from "./models/Conversation";
 import CallLog from "./models/CallLog";
 import mongoose from "mongoose";
+import { sendPushNotification } from "./utils/fcmService";
 
 interface ExtendedWebSocket extends WebSocket {
   userId?: string;
@@ -17,11 +18,9 @@ const activeCalls = new Map<string, { receiverId: string; startedAt: Date }>();
 
 export const initSocket = (server: Server) => {
   const wss = new WebSocketServer({ server, path: "/chat-ws" });
-
   const clients = new Map<string, ExtendedWebSocket>();
 
   wss.on("connection", async (ws: ExtendedWebSocket, req: IncomingMessage) => {
-    // 1. Auth
     const url = new URL(req.url || "", `http://${req.headers.host}`);
     const token = url.searchParams.get("token");
 
@@ -31,14 +30,9 @@ export const initSocket = (server: Server) => {
     }
 
     try {
-      const decoded: any = jwt.verify(
-        token,
-        process.env.JWT_SECRET || "secret"
-      );
+      const decoded: any = jwt.verify(token, process.env.JWT_SECRET || "secret");
       ws.userId = decoded.id;
       ws.isAlive = true;
-
-      // Keep track of client
       if (ws.userId) {
         clients.set(ws.userId, ws);
         console.log(`User connected: ${ws.userId}`);
@@ -48,17 +42,12 @@ export const initSocket = (server: Server) => {
       return;
     }
 
-    // 2. Pong heartbeat
-    ws.on("pong", () => {
-      ws.isAlive = true;
-    });
+    ws.on("pong", () => { ws.isAlive = true; });
 
-    // 3. Handle messages
     ws.on("message", async (data: string) => {
       try {
         const parsed = JSON.parse(data);
         const { type } = parsed;
-
         if (type === "message:send") {
           await handleMessageSend(ws, parsed, clients);
         } else if (type === "message:read") {
@@ -71,7 +60,6 @@ export const initSocket = (server: Server) => {
       }
     });
 
-    // 4. Cleanup
     ws.on("close", () => {
       if (ws.userId) {
         clients.delete(ws.userId);
@@ -80,7 +68,6 @@ export const initSocket = (server: Server) => {
     });
   });
 
-  // Heartbeat interval
   const interval = setInterval(() => {
     wss.clients.forEach((ws: WebSocket) => {
       const extWs = ws as ExtendedWebSocket;
@@ -92,8 +79,6 @@ export const initSocket = (server: Server) => {
 
   wss.on("close", () => clearInterval(interval));
 };
-
-// Handlers
 
 async function handleMessageSend(
   ws: ExtendedWebSocket,
@@ -108,7 +93,7 @@ async function handleMessageSend(
     const senderObjId = new mongoose.Types.ObjectId(senderId);
     const receiverObjId = new mongoose.Types.ObjectId(toUserId);
 
-    // Resolve or create conversation for these 2 users
+    // Resolve or create conversation
     let conversation =
       conversationId && typeof conversationId === "string"
         ? await Conversation.findById(conversationId)
@@ -152,7 +137,7 @@ async function handleMessageSend(
     (conversation as any).lastTimestamp = (newMessage as any).timestamp;
     await (conversation as any).save();
 
-    // ── Notify sender of successful transmission ──
+    // Ack sender
     const sender = clients.get(senderId);
     if (sender && sender.readyState === WebSocket.OPEN) {
       sender.send(
@@ -164,36 +149,42 @@ async function handleMessageSend(
       );
     }
 
-    // Deliver to intended receiver only
+    // Fetch sender info + receiver FCM token in parallel
+    let senderName = "User";
+    let senderAvatar = "";
+    let receiverFcmToken = "";
+    try {
+      const [senderUser, receiverUser] = await Promise.all([
+        User.findById(senderId).select("fullName name avatar"),
+        User.findById(toUserId).select("fcmToken"),
+      ]);
+      senderName =
+        (senderUser as any)?.fullName ||
+        (senderUser as any)?.name ||
+        senderName;
+      senderAvatar = (senderUser as any)?.avatar || "";
+      receiverFcmToken = (receiverUser as any)?.fcmToken || "";
+    } catch (_) {}
+
+    const messagePayload = JSON.stringify({
+      type: "message:new",
+      message: {
+        id: newMessage._id,
+        conversationId: (conversation as any)._id.toString(),
+        sender: senderId,
+        senderName,
+        senderAvatar,
+        body,
+        timestamp: newMessage.timestamp,
+      },
+    });
+
     const receiver = clients.get(toUserId);
     if (receiver && receiver.readyState === WebSocket.OPEN) {
-      let senderName = "User";
-      let senderAvatar = "";
-      try {
-        const senderUser = await User.findById(senderId).select(
-          "fullName name avatar"
-        );
-        senderName =
-          (senderUser as any)?.fullName || (senderUser as any)?.name || senderName;
-        senderAvatar = (senderUser as any)?.avatar || "";
-      } catch (_) {}
+      // Receiver is online — deliver via WebSocket
+      receiver.send(messagePayload);
 
-      receiver.send(
-        JSON.stringify({
-          type: "message:new",
-          message: {
-            id: newMessage._id,
-            conversationId: (conversation as any)._id.toString(),
-            sender: senderId,
-            senderName,
-            senderAvatar,
-            body,
-            timestamp: newMessage.timestamp,
-          },
-        })
-      );
-
-      // If receiver is online, mark as delivered back to sender
+      // Mark as delivered back to sender
       if (sender && sender.readyState === WebSocket.OPEN) {
         sender.send(
           JSON.stringify({
@@ -203,6 +194,23 @@ async function handleMessageSend(
           })
         );
       }
+    } else if (receiverFcmToken) {
+      // Receiver is offline — send FCM push notification
+      await sendPushNotification({
+        token: receiverFcmToken,
+        title: senderName,
+        body,
+        data: {
+          type: "message:new",
+          conversationId: (conversation as any)._id.toString(),
+          messageId: String(newMessage._id),
+          senderId,
+          senderName,
+          senderAvatar,
+          body,
+          timestamp: String(newMessage.timestamp),
+        },
+      });
     }
   } catch (error) {
     console.error("Error saving message:", error);
@@ -220,20 +228,22 @@ async function handleMessageRead(
 
   try {
     const timestamp = Date.now();
-    // Update all messages in this conversation not sent by me as read
-    const query: any = { conversationId, sender: { $ne: readerId }, readAt: { $exists: false } };
+    const query: any = {
+      conversationId,
+      sender: { $ne: readerId },
+      readAt: { $exists: false },
+    };
     if (messageId) query._id = messageId;
 
     await ChatMessage.updateMany(query, { readAt: timestamp });
 
-    // Notify other participants (simplified broadcast)
     clients.forEach((client, clientId) => {
       if (clientId !== readerId && client.readyState === WebSocket.OPEN) {
         client.send(
           JSON.stringify({
             type: "message:read",
             conversationId,
-            messageId, // if null, means mark all read
+            messageId,
             readAt: timestamp,
           })
         );
@@ -244,7 +254,6 @@ async function handleMessageRead(
   }
 }
 
-// VIDEO CALL SIGNALING
 async function handleCallSignaling(
   ws: ExtendedWebSocket,
   data: any,
@@ -262,24 +271,18 @@ async function handleCallSignaling(
   const target = clients.get(toUserId);
 
   if (type === "call:incoming" || type === "call:invite") {
-    // ── Look up caller's display name from DB ──
     let callerName = "Unknown";
     try {
       const caller = await User.findById(fromUserId).select("fullName name");
-      callerName = (caller as any)?.fullName || (caller as any)?.name || callerName;
+      callerName =
+        (caller as any)?.fullName || (caller as any)?.name || callerName;
     } catch (_) {}
 
-    // Track call start time
     activeCalls.set(fromUserId, { receiverId: toUserId, startedAt: new Date() });
 
     if (target && target.readyState === WebSocket.OPEN) {
       target.send(
-        JSON.stringify({
-          ...data,
-          fromUserId,
-          callerName,       // ← inject real name
-          type: "call:incoming",
-        })
+        JSON.stringify({ ...data, fromUserId, callerName, type: "call:incoming" })
       );
     } else {
       ws.send(JSON.stringify({ type: "call:error", message: "User is offline" }));
@@ -291,22 +294,29 @@ async function handleCallSignaling(
     const callInfo = activeCalls.get(fromUserId) ?? activeCalls.get(toUserId);
     if (callInfo) {
       const endedAt = new Date();
-      const durationSec = Math.round((endedAt.getTime() - callInfo.startedAt.getTime()) / 1000);
+      const durationSec = Math.round(
+        (endedAt.getTime() - callInfo.startedAt.getTime()) / 1000
+      );
       try {
         await CallLog.create({
-          callerId:   new mongoose.Types.ObjectId(callInfo.receiverId === toUserId ? fromUserId : toUserId),
-          receiverId: new mongoose.Types.ObjectId(callInfo.receiverId === toUserId ? toUserId : fromUserId),
+          callerId: new mongoose.Types.ObjectId(
+            callInfo.receiverId === toUserId ? fromUserId : toUserId
+          ),
+          receiverId: new mongoose.Types.ObjectId(
+            callInfo.receiverId === toUserId ? toUserId : fromUserId
+          ),
           status: durationSec > 3 ? "completed" : "missed",
           startedAt: callInfo.startedAt,
           endedAt,
           duration: durationSec > 3 ? durationSec : undefined,
         });
-      } catch (e) { console.error("CallLog save error:", e); }
+      } catch (e) {
+        console.error("CallLog save error:", e);
+      }
       activeCalls.delete(fromUserId);
       activeCalls.delete(toUserId);
-      
-      // Notify both parties to refresh history
-      [fromUserId, toUserId].forEach(id => {
+
+      [fromUserId, toUserId].forEach((id) => {
         const client = clients.get(id);
         if (client && client.readyState === WebSocket.OPEN) {
           client.send(JSON.stringify({ type: "history:updated" }));
@@ -316,21 +326,22 @@ async function handleCallSignaling(
   }
 
   if (type === "call:declined") {
-    const callInfo = activeCalls.get(toUserId); // toUserId is the caller here
+    const callInfo = activeCalls.get(toUserId);
     if (callInfo) {
       try {
         await CallLog.create({
-          callerId:   new mongoose.Types.ObjectId(toUserId),
+          callerId: new mongoose.Types.ObjectId(toUserId),
           receiverId: new mongoose.Types.ObjectId(fromUserId),
           status: "declined",
           startedAt: callInfo.startedAt,
           endedAt: new Date(),
         });
-      } catch (e) { console.error("CallLog save error:", e); }
+      } catch (e) {
+        console.error("CallLog save error:", e);
+      }
       activeCalls.delete(toUserId);
 
-      // Notify both parties to refresh history
-      [fromUserId, toUserId].forEach(id => {
+      [fromUserId, toUserId].forEach((id) => {
         const client = clients.get(id);
         if (client && client.readyState === WebSocket.OPEN) {
           client.send(JSON.stringify({ type: "history:updated" }));
@@ -339,7 +350,6 @@ async function handleCallSignaling(
     }
   }
 
-  // Forward to target
   if (target && target.readyState === WebSocket.OPEN) {
     target.send(JSON.stringify({ ...data, fromUserId }));
   } else if (type !== "call:ended" && type !== "call:declined") {
