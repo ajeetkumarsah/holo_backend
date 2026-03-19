@@ -102,15 +102,37 @@ async function handleMessageSend(
 ) {
   const { conversationId, body } = data;
   const senderId = ws.userId;
-  if (!senderId) return;
+  if (!senderId || !conversationId) return;
 
   try {
+    const senderObjId = new mongoose.Types.ObjectId(senderId);
+    const receiverObjId = new mongoose.Types.ObjectId(conversationId);
+
+    // ── Upsert conversation between sender and receiver ──
+    let conversation = await Conversation.findOne({
+      members: { $all: [senderObjId, receiverObjId], $size: 2 },
+    });
+
+    if (!conversation) {
+      conversation = await Conversation.create({
+        members: [senderObjId, receiverObjId],
+        lastMessage: body,
+        lastTimestamp: Date.now(),
+      });
+    }
+
+    // Persist chat message linked to conversation document
     const newMessage = await ChatMessage.create({
-      conversationId,
-      sender: new mongoose.Types.ObjectId(senderId),
+      conversationId: conversation._id.toString(),
+      sender: senderObjId,
       body,
       timestamp: Date.now(),
     });
+
+    // Keep conversation's last message/timestamp fresh
+    conversation.lastMessage = body;
+    conversation.lastTimestamp = newMessage.timestamp;
+    await conversation.save();
 
     // ── Notify sender of successful transmission ──
     const sender = clients.get(senderId);
@@ -124,34 +146,33 @@ async function handleMessageSend(
       );
     }
 
-    // ── Broadcast to other participants ──
-    // For now, simple broadcast to all EXCEPT sender.
-    // In a production app, we would look up members of the conversationId.
-    clients.forEach((client, clientId) => {
-      if (clientId !== senderId && client.readyState === WebSocket.OPEN) {
-        client.send(
+    // ── Deliver to the intended receiver only ──
+    const receiver = clients.get(conversationId); // conversationId is receiver userId
+    if (receiver && receiver.readyState === WebSocket.OPEN) {
+      receiver.send(
+        JSON.stringify({
+          type: "message:new",
+          message: {
+            id: newMessage._id,
+            conversationId: conversation._id.toString(),
+            sender: senderId,
+            body,
+            timestamp: newMessage.timestamp,
+          },
+        })
+      );
+
+      // If receiver is online, mark as delivered back to sender
+      if (sender && sender.readyState === WebSocket.OPEN) {
+        sender.send(
           JSON.stringify({
-            type: "message:new",
-            message: {
-              id: newMessage._id,
-              conversationId,
-              sender: senderId,
-              body,
-              timestamp: newMessage.timestamp,
-            },
-          })
-        );
-        
-        // If the other participant is online, we can consider it "delivered"
-        if (sender && sender.readyState === WebSocket.OPEN) {
-          sender.send(JSON.stringify({
             type: "message:delivered",
             messageId: newMessage._id,
-            deliveredAt: Date.now()
-          }));
-        }
+            deliveredAt: Date.now(),
+          })
+        );
       }
-    });
+    }
   } catch (error) {
     console.error("Error saving message:", error);
   }
