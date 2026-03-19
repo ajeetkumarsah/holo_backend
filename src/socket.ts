@@ -100,17 +100,57 @@ async function handleMessageSend(
   data: any,
   clients: Map<string, ExtendedWebSocket>
 ) {
-  const { conversationId, body } = data;
+  const { conversationId, toUserId, body } = data;
   const senderId = ws.userId;
-  if (!senderId) return;
+  if (!senderId || !toUserId || !body) return;
 
   try {
+    const senderObjId = new mongoose.Types.ObjectId(senderId);
+    const receiverObjId = new mongoose.Types.ObjectId(toUserId);
+
+    // Resolve or create conversation for these 2 users
+    let conversation =
+      conversationId && typeof conversationId === "string"
+        ? await Conversation.findById(conversationId)
+        : null;
+
+    if (
+      conversation &&
+      !(
+        (conversation as any).members?.some(
+          (m: any) => m.toString() === senderObjId.toString()
+        ) &&
+        (conversation as any).members?.some(
+          (m: any) => m.toString() === receiverObjId.toString()
+        )
+      )
+    ) {
+      conversation = null;
+    }
+
+    if (!conversation) {
+      conversation = await Conversation.findOne({
+        members: { $all: [senderObjId, receiverObjId], $size: 2 },
+      });
+      if (!conversation) {
+        conversation = await Conversation.create({
+          members: [senderObjId, receiverObjId],
+          lastMessage: body,
+          lastTimestamp: Date.now(),
+        });
+      }
+    }
+
     const newMessage = await ChatMessage.create({
-      conversationId,
-      sender: new mongoose.Types.ObjectId(senderId),
+      conversationId: (conversation as any)._id.toString(),
+      sender: senderObjId,
       body,
       timestamp: Date.now(),
     });
+
+    (conversation as any).lastMessage = body;
+    (conversation as any).lastTimestamp = (newMessage as any).timestamp;
+    await (conversation as any).save();
 
     // ── Notify sender of successful transmission ──
     const sender = clients.get(senderId);
@@ -124,34 +164,46 @@ async function handleMessageSend(
       );
     }
 
-    // ── Broadcast to other participants ──
-    // For now, simple broadcast to all EXCEPT sender.
-    // In a production app, we would look up members of the conversationId.
-    clients.forEach((client, clientId) => {
-      if (clientId !== senderId && client.readyState === WebSocket.OPEN) {
-        client.send(
-          JSON.stringify({
-            type: "message:new",
-            message: {
-              id: newMessage._id,
-              conversationId,
-              sender: senderId,
-              body,
-              timestamp: newMessage.timestamp,
-            },
-          })
+    // Deliver to intended receiver only
+    const receiver = clients.get(toUserId);
+    if (receiver && receiver.readyState === WebSocket.OPEN) {
+      let senderName = "User";
+      let senderAvatar = "";
+      try {
+        const senderUser = await User.findById(senderId).select(
+          "fullName name avatar"
         );
-        
-        // If the other participant is online, we can consider it "delivered"
-        if (sender && sender.readyState === WebSocket.OPEN) {
-          sender.send(JSON.stringify({
+        senderName =
+          (senderUser as any)?.fullName || (senderUser as any)?.name || senderName;
+        senderAvatar = (senderUser as any)?.avatar || "";
+      } catch (_) {}
+
+      receiver.send(
+        JSON.stringify({
+          type: "message:new",
+          message: {
+            id: newMessage._id,
+            conversationId: (conversation as any)._id.toString(),
+            sender: senderId,
+            senderName,
+            senderAvatar,
+            body,
+            timestamp: newMessage.timestamp,
+          },
+        })
+      );
+
+      // If receiver is online, mark as delivered back to sender
+      if (sender && sender.readyState === WebSocket.OPEN) {
+        sender.send(
+          JSON.stringify({
             type: "message:delivered",
             messageId: newMessage._id,
-            deliveredAt: Date.now()
-          }));
-        }
+            deliveredAt: Date.now(),
+          })
+        );
       }
-    });
+    }
   } catch (error) {
     console.error("Error saving message:", error);
   }

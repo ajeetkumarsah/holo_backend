@@ -35,8 +35,9 @@ router.get('/conversations', protect, async (req: any, res) => {
 
       return {
         id: conv._id.toString(),
-        name: otherUser?.fullName || 'Unknown',
-        avatar_url: otherUser?.avatar || '',
+        otherUserId: otherUser?._id?.toString() || '',
+        name: otherUser?.fullName || otherUser?.email || otherUser?.phoneNumber || 'User',
+        avatar_url: otherUser?.avatar || 'https://thumbs.dreamstime.com/b/default-avatar-profile-icon-vector-social-media-user-image-182145777.jpg',
         last_message: conv.lastMessage || '',
         last_timestamp: conv.lastTimestamp || 0,
         unread_count: unreadCount,
