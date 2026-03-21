@@ -137,7 +137,7 @@ async function handleMessageSend(
     (conversation as any).lastTimestamp = (newMessage as any).timestamp;
     await (conversation as any).save();
 
-    // Ack sender
+    // Ack sender (include real conversationId so frontend can migrate from temp ID)
     const sender = clients.get(senderId);
     if (sender && sender.readyState === WebSocket.OPEN) {
       sender.send(
@@ -145,6 +145,7 @@ async function handleMessageSend(
           type: "message:ack",
           messageId: newMessage._id,
           tempId: data.tempId,
+          conversationId: (conversation as any)._id.toString(),
         })
       );
     }
@@ -174,10 +175,17 @@ async function handleMessageSend(
         sender: senderId,
         senderName,
         senderAvatar,
+        toUserId,
         body,
         timestamp: newMessage.timestamp,
       },
     });
+
+    // Echo message:new to sender so their conversation list updates in real-time
+    // (especially important for new conversations where conversationId gets assigned)
+    if (sender && sender.readyState === WebSocket.OPEN) {
+      sender.send(messagePayload);
+    }
 
     const receiver = clients.get(toUserId);
     if (receiver && receiver.readyState === WebSocket.OPEN) {
